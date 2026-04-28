@@ -1,0 +1,207 @@
+From Debugging to System Thinking
+
+1. Problem Overview
+
+What initially appeared to be a typical system failure—repeated crashes, connection issues, and an unrecoverable environment—turned out to be far more complex.
+
+As I investigated further, I realized:
+
+This was not a single bug, but a chain of independent edge-case issues that were triggered simultaneously under specific conditions, forming a cascading failure across multiple system layers.
+
+Attempts to fix individual issues proved ineffective. This led me to a key realization:
+
+Local fixes cannot resolve systemic failures; understanding the system structure and interactions is essential.
+
+Further analysis revealed that this case reflects several common patterns in complex systems:
+
+Optional components becoming part of the critical path
+Fragility of local-first protocols in real-world environments
+Failures arising not from individual components, but from error propagation
+2. System Model
+
+To better understand the problem, I constructed a layered model of the system rather than relying on existing documentation.
+
+The system can be abstracted into seven layers:
+
+Layer 1: Operating System Layer
+Network stack, filesystem, DNS
+Layer 2: Runtime Layer
+Node.js, npm, nvm, dependency management
+Layer 3: Process Management Layer
+Service lifecycle management (e.g., launchd on macOS)
+Layer 4: Service Discovery Layer
+Bonjour / mDNS for local network service broadcasting
+Layer 5: Gateway Core Layer
+WebSocket handling, message routing, session management
+Layer 6: Security Layer
+Device authentication (Ed25519), access control
+Layer 7: Client Layer
+Web UI, Mac App (Electron), CLI (TUI)
+
+A key observation:
+
+Components designed as “optional” (e.g., service discovery) can become implicit prerequisites in implementation, effectively placing them on the critical path.
+
+3. Layer-wise Issues & Design Assumptions
+
+The following issues are organized by failure propagation order, not by layer hierarchy.
+
+Their shared characteristic:
+
+Design assumptions break down under real-world conditions.
+
+🔹 Layer 4: Service Discovery (Bonjour)
+Issue: Crash when processing hostnames with special characters (e.g., ')
+Assumption: Hostnames are simple and normalized
+Reality: macOS allows complex hostnames
+Core Problem: Lack of fault isolation—plugin failure crashes the entire process
+
+Although designed as optional, this component effectively becomes part of the critical path.
+
+🔹 Layer 3: Process Management
+Issue: Infinite restart loop after crash
+Assumption: Failures are transient
+Reality: Failure is deterministic
+Core Problem: No throttling or backoff mechanism
+🔹 Layer 7: Client Layer
+Issue: Configuration overwrite
+Assumption: Client fully controls config structure
+Reality: Users extend configs manually
+Core Problem: Replace instead of merge
+🔹 Layer 6: Security Layer
+Issue: Authentication failure (device identity required)
+Assumption: All clients use updated protocol
+Reality: Version mismatch exists
+Core Problem: Lack of backward compatibility
+🔹 Layer 5: Gateway Core
+Issue: Infinite reconnect loop (WebSocket 1006)
+Assumption: Failures are transient
+Reality: Failure is permanent (auth rejection)
+Core Problem: No distinction between transient and permanent errors
+🔹 Layer 2: Runtime Layer
+Issue 1: npm EACCES error
+Cause: nvm directory owned by root
+Issue 2: uv_cwd error
+Cause: working directory deleted
+Core Problem: Lack of robustness against invalid environments
+4. Failure Propagation Chain
+
+The failure unfolds as a clear causal chain:
+
+Service discovery crash (Layer 4)
+→ triggered by special hostname
+Process manager amplification (Layer 3)
+→ infinite restart loop
+Access path shift
+→ user switches from UI to CLI
+Security layer blockage (Layer 6)
+→ protocol mismatch, authentication failure
+Gateway amplification (Layer 5)
+→ infinite reconnect attempts
+Client-side corruption (Layer 7)
+→ config overwritten
+Runtime lockout (Layer 2)
+→ environment cannot be repaired
+
+Key insight:
+System failure is not caused by a single fault, but by error propagation across layers.
+
+5. Environment & Trigger Conditions
+
+The failure depends on a combination of edge conditions:
+
+Hostname with special characters
+WiFi switching (Bonjour state inconsistency)
+Mixed GUI and CLI usage
+Client–gateway version mismatch
+Manual config modifications
+sudo-induced permission changes
+Deleted working directory
+
+These conditions are uncommon in testing environments but realistic in actual user scenarios.
+
+6. Root Causes
+
+From a system design perspective, the issues can be categorized into four patterns:
+
+1. Implicit Assumptions
+
+Systems assume consistent, clean environments, which rarely hold in practice.
+
+2. Lack of Fault Isolation
+
+Failures in one component propagate across the system.
+
+3. Lack of Graceful Degradation
+
+The system fails completely instead of partially degrading.
+
+4. Fragility of Local-First Protocols
+
+mDNS / Bonjour depends on:
+
+Network stability
+Hostname validity
+Broadcast reliability
+
+Any failure in these assumptions can break the system, with no fallback mechanism.
+
+7. Generalized Insights
+
+This case reveals several general principles:
+
+7.1 Optional Components Become Critical Paths
+
+Design intent does not match implementation reality.
+
+7.2 Local Protocols Are Environment-Sensitive
+
+System behavior becomes dependent on unstable external conditions.
+
+7.3 Error Propagation Is the Core Problem
+
+Component failure is normal; uncontrolled propagation is not.
+
+Core Principle:
+System robustness depends not on eliminating failures, but on containing them.
+
+8. Product Blind Spots
+
+The following real-world usage patterns were not adequately covered:
+
+Special-character hostnames
+Mixed client usage (GUI + CLI)
+Permission anomalies
+Version mismatches
+Manual configuration edits
+
+These are not edge cases—they represent real user behavior.
+
+9. Recommendations
+
+Focus: reduce critical dependencies + isolate failures
+
+Service Discovery: isolate failures, allow disabling
+Process Management: introduce backoff
+Security: support protocol compatibility
+Gateway: classify error types
+Client: use config merge
+Runtime: validate environment before execution
+10. Conclusion
+
+This experience shifted my perspective from fixing bugs to understanding systems.
+
+I came to realize:
+
+System reliability depends on whether failures are localized
+Well-designed systems do not avoid failure—they handle it gracefully
+
+The quality of a system is not defined by the absence of bugs, but by how it responds to them.
+
+This has led me to explore deeper topics such as:
+
+Distributed systems
+Fault-tolerant design
+System reliability
+
+And to think about how to build systems that degrade gracefully rather than fail catastrophically.
